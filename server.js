@@ -1,7 +1,8 @@
-// AutoCaptio backend — the ONLY place your OpenAI API key ever lives.
+// AutoCaptio backend — the ONLY place your API key ever lives.
 // Users never see this key. Their browser sends audio here; this server
-// forwards it to OpenAI using YOUR key (kept in an environment variable /
-// Glitch "Secret", never written into this file or sent to the browser).
+// forwards it to Groq (free Whisper transcription, no credit card needed)
+// using YOUR key, kept in an environment variable (Render "Secret"), never
+// written into this file or sent to the browser.
 
 const express = require('express');
 const multer = require('multer');
@@ -25,18 +26,18 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No audio file received' });
     }
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: 'Server is missing OPENAI_API_KEY — add it in your hosting dashboard\'s secrets/environment variables' });
+      return res.status(500).json({ error: 'Server is missing GROQ_API_KEY — add it in your hosting dashboard\'s environment variables' });
     }
 
     const form = new FormData();
     form.append('file', req.file.buffer, { filename: req.file.originalname || 'audio.webm' });
-    form.append('model', 'whisper-1');
+    form.append('model', 'whisper-large-v3-turbo'); // Groq's fast, free-tier Whisper model
     form.append('response_format', 'verbose_json');
     form.append('timestamp_granularities[]', 'word');
 
-    const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    const whisperRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, ...form.getHeaders() },
       body: form
@@ -44,7 +45,7 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
 
     const data = await whisperRes.json();
     if (!whisperRes.ok) {
-      return res.status(whisperRes.status).json({ error: data.error?.message || 'Whisper API error' });
+      return res.status(whisperRes.status).json({ error: data.error?.message || 'Transcription API error' });
     }
     res.json(data);
   } catch (err) {
