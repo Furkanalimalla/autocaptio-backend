@@ -1,7 +1,4 @@
 // server.js
-// Run with: node server.js
-// Requires: express, cors, multer, bcrypt, uuid, fs, path
-
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -15,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 
 // ---------- Middleware ----------
 app.use(cors({
-  origin: '*', // allow all origins (for development)
+  origin: '*', // adjust for production if needed
   methods: ['GET', 'POST', 'DELETE', 'PUT'],
   allowedHeaders: ['Content-Type', 'x-user-token']
 }));
@@ -26,7 +23,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB
 });
 
 // ---------- Data persistence (JSON files) ----------
@@ -39,7 +36,6 @@ const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const TEAM_FILE = path.join(DATA_DIR, 'team.json');
 const CALLBACKS_FILE = path.join(DATA_DIR, 'callbacks.json');
 
-// Helper to read/write JSON files
 function readJSON(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -51,7 +47,6 @@ function writeJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
-// ---------- In-memory stores (also persisted) ----------
 let users = readJSON(USERS_FILE);
 let projects = readJSON(PROJECTS_FILE);
 let orders = readJSON(ORDERS_FILE);
@@ -72,7 +67,7 @@ function getUserByToken(token) {
   return users.find(u => u.token === token) || null;
 }
 
-// Middleware to verify token (used for protected routes)
+// Middleware to verify token (protected routes)
 function requireUser(req, res, next) {
   const token = req.headers['x-user-token'];
   const user = getUserByToken(token);
@@ -85,11 +80,16 @@ function requireUser(req, res, next) {
 
 // ---------- Routes ----------
 
+// ========== Root ==========
+app.get('/', (req, res) => {
+  res.json({ message: 'AutoCaptio backend is running!' });
+});
+
 // ========== Settings (public) ==========
 app.get('/settings', (req, res) => {
   res.json({
     upiId: 'autocaptio@upi',
-    qrImage: null, // can be a base64 or URL
+    qrImage: null,
     prices: { single: 10, weekly: 39, monthly: 114, yearly: 900 }
   });
 });
@@ -135,13 +135,12 @@ app.post('/login', async (req, res) => {
   if (!match) {
     return res.status(400).json({ error: 'Invalid credentials' });
   }
-  // Regenerate token (optional)
   user.token = uuidv4();
   saveAll();
   res.json({ email: user.email, token: user.token });
 });
 
-// ========== Dashboard (protected) ==========
+// ========== Dashboard ==========
 app.get('/dashboard', requireUser, (req, res) => {
   const user = req.user;
   res.json({
@@ -149,18 +148,16 @@ app.get('/dashboard', requireUser, (req, res) => {
     videosProcessed: user.videosProcessed || 0,
     points: user.points || 0,
     referralCode: user.referralCode,
-    credits: 0 // always free now
+    credits: 0
   });
 });
 
-// ========== Projects (CRUD) ==========
-// List projects
+// ========== Projects ==========
 app.get('/projects', requireUser, (req, res) => {
   const userProjects = projects.filter(p => p.userId === req.user.id);
   res.json(userProjects);
 });
 
-// Save project (with optional video file)
 app.post('/projects', requireUser, upload.single('video'), (req, res) => {
   const { title, captionsJson, presetKey, chapters } = req.body;
   if (!title) {
@@ -184,23 +181,17 @@ app.post('/projects', requireUser, upload.single('video'), (req, res) => {
   projects.push(project);
   saveAll();
 
-  // Optionally store video file (for simplicity we store as base64 in memory, but better to store on disk)
-  // For demo, we'll store the video in a separate file or just keep as blob in memory.
-  // Here we'll store it as a buffer in a 'videos' folder.
   if (req.file) {
     const videoDir = path.join(DATA_DIR, 'videos');
     if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
     const videoPath = path.join(videoDir, `${project.id}.mp4`);
     fs.writeFileSync(videoPath, req.file.buffer);
-    project.videoPath = videoPath; // we could store path, but not in JSON for simplicity
-    // We'll just set hasVideo true and serve via another endpoint.
+    // We don't store path in JSON; hasVideo is enough.
   }
   saveAll();
-
   res.json({ id: project.id, message: 'Project saved' });
 });
 
-// Get video for a project
 app.get('/projects/:id/video', requireUser, (req, res) => {
   const project = projects.find(p => p.id === req.params.id && p.userId === req.user.id);
   if (!project || !project.hasVideo) {
@@ -214,7 +205,6 @@ app.get('/projects/:id/video', requireUser, (req, res) => {
   }
 });
 
-// Delete project
 app.delete('/projects/:id', requireUser, (req, res) => {
   const index = projects.findIndex(p => p.id === req.params.id && p.userId === req.user.id);
   if (index === -1) {
@@ -230,8 +220,7 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No audio file provided' });
   }
-  // Simulate transcription with some mock data
-  // Replace this with actual Whisper API call or local inference
+  // Mock response – replace with real Whisper API
   const words = [
     { word: 'Hey', start: 0.0, end: 0.4, confidence: 0.95 },
     { word: 'creators!', start: 0.5, end: 1.2, confidence: 0.92 },
@@ -249,7 +238,6 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
     { word: 'it', start: 8.7, end: 9.0, confidence: 0.98 },
     { word: 'viral', start: 9.1, end: 9.8, confidence: 0.88 }
   ];
-  // Increase user's processed count
   const user = getUserByToken(req.headers['x-user-token']);
   if (user) {
     user.videosProcessed = (user.videosProcessed || 0) + 1;
@@ -265,18 +253,15 @@ app.post('/translate', express.json(), (req, res) => {
   if (!words || !targetLanguage) {
     return res.status(400).json({ error: 'Missing words or targetLanguage' });
   }
-  // Simulate translation by prefixing or using a simple mapping (for demo)
   const translated = words.map(w => {
     let translatedWord = w.word;
     if (targetLanguage === 'hi') {
-      // Simple mock Hindi (just for demo)
       const map = { 'Hey': 'अरे', 'creators!': 'निर्माताओं', 'Welcome': 'स्वागत', 'to': 'को', 'AutoCaptio': 'ऑटोकैप्शन', 'Upload': 'अपलोड', 'your': 'आपका', 'video': 'वीडियो', 'Get': 'प्राप्त', 'instant': 'तुरंत', 'subtitles': 'उपशीर्षक', 'Then': 'फिर', 'make': 'बनाएं', 'it': 'इसे', 'viral': 'वायरल' };
       translatedWord = map[w.word] || w.word + ' (hi)';
     } else if (targetLanguage === 'es') {
       const map = { 'Hey': 'Hola', 'creators!': 'creadores', 'Welcome': 'Bienvenido', 'to': 'a', 'AutoCaptio': 'AutoCaptio', 'Upload': 'Subir', 'your': 'tu', 'video': 'video', 'Get': 'Obtener', 'instant': 'instantáneo', 'subtitles': 'subtítulos', 'Then': 'Entonces', 'make': 'hacer', 'it': 'lo', 'viral': 'viral' };
       translatedWord = map[w.word] || w.word + ' (es)';
     } else if (targetLanguage === 'hinglish') {
-      // Add "ji" for fun
       translatedWord = w.word + ' ji';
     }
     return { ...w, word: translatedWord };
@@ -318,7 +303,6 @@ app.post('/callback-request', express.json(), (req, res) => {
 
 // ========== Team Management ==========
 app.get('/team', requireUser, (req, res) => {
-  // For demo, return a static list or from teamInvites
   const members = teamInvites.filter(t => t.ownerId === req.user.id);
   res.json(members);
 });
@@ -354,11 +338,12 @@ app.delete('/team/remove', requireUser, express.json(), (req, res) => {
 app.get('/export', requireUser, (req, res) => {
   const userProjects = projects.filter(p => p.userId === req.user.id);
   const userOrders = orders.filter(o => o.user === req.user.email || o.email === req.user.email);
+  // No phone filter – removed because user object doesn't have phone
   res.json({
     user: req.user,
     projects: userProjects,
     orders: userOrders,
-    callbacks: callbacks.filter(c => c.phone === req.user.phone) // optional
+    callbacks: callbacks // optionally filter by email if needed
   });
 });
 
@@ -367,7 +352,6 @@ app.delete('/delete', requireUser, (req, res) => {
   const userIndex = users.findIndex(u => u.id === req.user.id);
   if (userIndex > -1) {
     users.splice(userIndex, 1);
-    // Also delete their projects
     projects = projects.filter(p => p.userId !== req.user.id);
     saveAll();
     res.json({ message: 'Account deleted' });
